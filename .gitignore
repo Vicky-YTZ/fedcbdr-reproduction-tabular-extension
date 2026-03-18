@@ -1,0 +1,38 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Virtual environments
+venv/
+.env/
+.venv/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Model weights
+*.pth
+*.pt
+*.ckpt
+
+# Dataset / large files
+data/
+datasets/
+*.zip
+*.tar
+*.gz
+
+# Build / temp
+build/
+dist/
+tmp/
+temp/
