@@ -1,6 +1,7 @@
 from torchvision import datasets, transforms
 from torch.utils.data import Subset
-
+import numpy as np
+from torch.utils.data import Subset
 
 def load_cifar10():
     transform = transforms.Compose([transforms.ToTensor()])
@@ -71,3 +72,47 @@ def get_dataloader(dataset, batch_size=64, shuffle=True):
     return DataLoader(
         dataset, batch_size=batch_size, shuffle=shuffle, num_workers=4, generator=g
     )
+
+def split_task_dataset_dirichlet(task_dataset, num_clients=2, alpha=0.5, seed=42):
+    np.random.seed(seed)
+    
+    original_dataset = task_dataset.dataset
+    indices = np.array(task_dataset.indices)
+    
+    labels = np.array([original_dataset.targets[i] for i in indices])
+    classes = np.unique(labels)
+    
+    client_indices_map = {i: [] for i in range(num_clients)}
+    
+    for c in classes:
+        idx_c = np.where(labels == c)[0]
+        np.random.shuffle(idx_c)
+        
+        proportions = np.random.dirichlet(np.repeat(alpha, num_clients))
+        
+        num_samples_per_client = np.round(proportions * len(idx_c)).astype(int)
+        
+        diff = len(idx_c) - num_samples_per_client.sum()
+        while diff > 0:
+            client_id = np.random.randint(num_clients)
+            num_samples_per_client[client_id] += 1
+            diff -= 1
+        while diff < 0:
+            client_id = np.random.randint(num_clients)
+            if num_samples_per_client[client_id] > 0:
+                num_samples_per_client[client_id] -= 1
+                diff += 1
+                
+        start_idx = 0
+        for i in range(num_clients):
+            end_idx = start_idx + num_samples_per_client[i]
+            client_idcs = indices[idx_c[start_idx:end_idx]]
+            client_indices_map[i].extend(client_idcs.tolist())
+            start_idx = end_idx
+            
+    client_subsets = []
+    for i in range(num_clients):
+        np.random.shuffle(client_indices_map[i])
+        client_subsets.append(Subset(original_dataset, client_indices_map[i]))
+        
+    return client_subsets
