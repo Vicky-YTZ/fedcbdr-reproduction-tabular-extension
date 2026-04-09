@@ -1,7 +1,15 @@
 from torchvision import datasets, transforms
 from torch.utils.data import Subset
 import numpy as np
-from torch.utils.data import Subset
+import pandas as pd
+import torch
+import os
+from torch.utils.data import Dataset, Subset, random_split, DataLoader
+from sklearn.preprocessing import StandardScaler
+from sklearn.datasets import fetch_openml
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from ucimlrepo import fetch_ucirepo
 
 def load_cifar10():
     transform = transforms.Compose([transforms.ToTensor()])
@@ -63,14 +71,14 @@ def split_task_dataset_among_clients(task_dataset, num_clients=2):
 from torch.utils.data import DataLoader
 
 
-def get_dataloader(dataset, batch_size=64, shuffle=True):
+def get_dataloader(dataset, batch_size=64, shuffle=True, drop_last=False):
     import torch
 
     g = torch.Generator()
     g.manual_seed(42)
 
     return DataLoader(
-        dataset, batch_size=batch_size, shuffle=shuffle, num_workers=4, generator=g
+        dataset, batch_size=batch_size, shuffle=shuffle, num_workers=4, generator=g, drop_last=drop_last
     )
 
 def split_task_dataset_dirichlet(task_dataset, num_clients=2, alpha=0.5, seed=42):
@@ -116,3 +124,53 @@ def split_task_dataset_dirichlet(task_dataset, num_clients=2, alpha=0.5, seed=42
         client_subsets.append(Subset(original_dataset, client_indices_map[i]))
         
     return client_subsets
+
+class TabularDataset(Dataset):
+    def __init__(self, csv_file, target_col='label'):
+        df = pd.read_csv(csv_file)
+        
+        self.targets = df[target_col].values.astype(np.int64)
+        X_raw = df.drop(columns=[target_col]).values.astype(np.float32)
+        
+        scaler = StandardScaler()
+        self.X = scaler.fit_transform(X_raw)
+        
+        self.input_dim = self.X.shape[1]
+
+    def __len__(self):
+        return len(self.targets)
+
+    def __getitem__(self, idx):
+        return torch.tensor(self.X[idx]), torch.tensor(self.targets[idx])
+
+def load_tabular_data(target_col='label'):
+    train_csv_path, test_csv_path = download_dry_bean_if_not_exists()
+    train_dataset = TabularDataset(train_csv_path, target_col)
+    test_dataset = TabularDataset(test_csv_path, target_col)
+    return train_dataset, test_dataset
+
+def download_dry_bean_if_not_exists(data_dir='data'):
+    train_path = os.path.join(data_dir, 'train.csv')
+    test_path = os.path.join(data_dir, 'test.csv')
+    
+    if os.path.exists(train_path) and os.path.exists(test_path):
+        return train_path, test_path
+        
+    os.makedirs(data_dir, exist_ok=True)
+    
+    dry_bean = fetch_ucirepo(id=602)
+    X = dry_bean.data.features
+    y = dry_bean.data.targets
+    
+    df = pd.concat([X, y], axis=1)
+    
+    le = LabelEncoder()
+    df['label'] = le.fit_transform(df['Class'])
+    df = df.drop(columns=['Class'])
+    
+    train_df, test_df = train_test_split(df, test_size=0.2, random_state=42, stratify=df['label'])
+    
+    train_df.to_csv(train_path, index=False)
+    test_df.to_csv(test_path, index=False)
+    
+    return train_path, test_path

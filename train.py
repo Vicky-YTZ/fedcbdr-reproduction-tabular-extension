@@ -11,7 +11,7 @@ def train_one_epoch(model, dataloader, device, replay_dataset=None, batch_size=6
     if replay_dataset is not None:
         combined_dataset = ConcatDataset([dataloader.dataset, replay_dataset])
         dataloader = DataLoader(
-            combined_dataset, batch_size=batch_size, shuffle=True, num_workers=4
+            combined_dataset, batch_size=batch_size, shuffle=True, num_workers=4, drop_last=True
         )
 
     criterion = nn.CrossEntropyLoss()
@@ -20,13 +20,13 @@ def train_one_epoch(model, dataloader, device, replay_dataset=None, batch_size=6
     total = 0
     correct = 0
 
-    for images, labels in dataloader:
-        images = images.to(device)
+    for inputs, labels in dataloader:
+        inputs = inputs.to(device)
         labels = labels.to(device)
 
         optimizer.zero_grad()
 
-        outputs = model(images)
+        outputs = model(inputs)
         loss = criterion(outputs, labels)
 
         loss.backward()
@@ -105,11 +105,13 @@ def train_one_epoch_tts(model, dataloader, device, replay_dataset=None, batch_si
     total = 0
     correct = 0
 
-    for images, labels in dataloader:
-        images, labels = images.to(device), labels.to(device)
+    for inputs, labels in dataloader:
+        if inputs.size(0) <= 1:
+            continue
+        inputs, labels = inputs.to(device), labels.to(device)
         optimizer.zero_grad()
         
-        outputs = model(images)
+        outputs = model(inputs)
         
         # IMPORTANT MASKING FOR TASK 0 AS WELL
         if task_id == 0:
