@@ -150,7 +150,6 @@ def main():
         )
 
         print("\n--- Constructing Replay Buffer ---")
-        # Update buffer sau khi Train xong Task
         task_client_datasets = split_task_dataset_dirichlet(
             train_task_datasets[task_id],
             num_clients=NUM_CLIENTS,
