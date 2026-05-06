@@ -7,7 +7,7 @@ import torch.nn.functional as F
 def train_one_epoch(model, dataloader, device, replay_dataset=None, batch_size=64):
     model.train()
 
-    # 如果有 replay 数据，就把当前 task 数据和 replay 数据拼起来
+    # If there is replay data, concatenate the current task data with the replay data
     if replay_dataset is not None:
         combined_dataset = ConcatDataset([dataloader.dataset, replay_dataset])
         dataloader = DataLoader(
@@ -41,42 +41,39 @@ def train_one_epoch(model, dataloader, device, replay_dataset=None, batch_size=6
     return acc
 
 class TTSLoss(nn.Module):
-    """
-    Task-aware Temperature Scaling (TTS) Loss from FedCBDR.
-    """
-    def __init__(self, num_old_classes, num_total_seen_classes, tau_old=0.9, tau_new=1.1, w_old=1.1, w_new=0.9):
+    def __init__(self, num_old_classes, tau_old=0.5, tau_new=1.5, w_old=1.5, w_new=1.0):
         super(TTSLoss, self).__init__()
         self.num_old_classes = num_old_classes
-        self.num_total_seen_classes = num_total_seen_classes
-        
         self.tau_old = tau_old
         self.tau_new = tau_new
         self.w_old = w_old
         self.w_new = w_new
 
-    def forward(self, logits, targets):
-        # Drop unseen future classes
-        logits = logits[:, :self.num_total_seen_classes]
+    def forward(self, logits, labels):
+        device = logits.device
         
-        # Split logits and apply temperature scaling using ONLY seen classes
-        logits_old = logits[:, :self.num_old_classes] / self.tau_old
-        logits_new = logits[:, self.num_old_classes:] / self.tau_new
+        # --- Step 1: Scale temperatures by Column (Class) ---
+        old_logits = logits[:, :self.num_old_classes] / self.tau_old
+        new_logits = logits[:, self.num_old_classes:] / self.tau_new
+        scaled_logits = torch.cat([old_logits, new_logits], dim=1)
+
+        # --- Step 2: Scale temperatures by Row (Sample) ---
+        is_old_sample = labels < self.num_old_classes
+        sample_temp = torch.where(is_old_sample, self.tau_old, self.tau_new).to(device)
+        sample_temp = sample_temp.view(-1, 1)
         
-        scaled_logits = torch.cat([logits_old, logits_new], dim=1)
-        ce_loss = F.cross_entropy(scaled_logits, targets, reduction='none')
+        # Second scaling (THE AUTHOR'S TRICK TO PREVENT GRADIENT EXPLOSION)
+        scaled_logits = scaled_logits / sample_temp  
 
-        weights = torch.where(
-            targets < self.num_old_classes,
-            torch.tensor(self.w_old, dtype=logits.dtype, device=logits.device),
-            torch.tensor(self.w_new, dtype=logits.dtype, device=logits.device)
-        )
-
-        return (ce_loss * weights).mean()
-
+        # --- Step 3: Multiply loss weights ---
+        weights = torch.where(is_old_sample, self.w_old, self.w_new).to(device)
+        losses = F.cross_entropy(scaled_logits, labels, reduction='none')
+        
+        return (losses * weights).mean()
 
 
 def train_one_epoch_tts(model, dataloader, device, replay_dataset=None, batch_size=64,
-                        task_id=0, num_old_classes=0, num_total_seen_classes=10, use_tts=True):
+                        task_id=0, num_old_classes=0, num_total_seen_classes=10, use_tts=True, lr=0.01):
     model.train()
     
     if replay_dataset is not None and len(replay_dataset) > 0:
@@ -85,18 +82,19 @@ def train_one_epoch_tts(model, dataloader, device, replay_dataset=None, batch_si
     else:
         train_loader = dataloader
 
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.01, weight_decay=1e-5)
+    # 2. OPTIMIZER AS CONFIGURED IN THE PAPER
+    optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=1e-5)
     
-    basic_criterion = nn.CrossEntropyLoss()
-    tts_criterion = nn.CrossEntropyLoss(reduction='none') 
+    # 3. INITIALIZE LOSS FUNCTION (This is where TTSLoss is called!)
+    if use_tts and task_id > 0:
+        criterion = TTSLoss(num_old_classes, tau_old=0.5, tau_new=1.5, w_old=5.0, w_new=1.0)
+    else:
+        criterion = nn.CrossEntropyLoss()
 
-    tau_old = 0.8
-    tau_new = 1.2
-    w_old = 1.5
-    w_new = 0.8
     total = 0
     correct = 0
 
+    # 4. TRAINING LOOP
     for inputs, labels in train_loader:
         if inputs.size(0) == 1:
             continue 
@@ -105,27 +103,9 @@ def train_one_epoch_tts(model, dataloader, device, replay_dataset=None, batch_si
         optimizer.zero_grad()
         
         outputs = model(inputs)
-        outputs = outputs[:, :num_total_seen_classes]
         
-        if use_tts and task_id > 0 and replay_dataset is not None:
-            z_old = outputs[:, :num_old_classes]
-            z_new = outputs[:, num_old_classes:]
-            
-            z_old_scaled = z_old / tau_old
-            z_new_scaled = z_new / tau_new
-            
-            z_scaled = torch.cat([z_old_scaled, z_new_scaled], dim=1)
-            
-            loss_per_sample = tts_criterion(z_scaled, labels)
-            
-            is_old_class = (labels < num_old_classes).float()
-            is_new_class = 1.0 - is_old_class
-            
-            sample_weights = is_old_class * w_old + is_new_class * w_new
-            
-            loss = (loss_per_sample * sample_weights).mean()
-        else:
-            loss = basic_criterion(outputs, labels)
+        # CALCULATE COMPACT LOSS (Using the initialized class above)
+        loss = criterion(outputs, labels)
             
         loss.backward()
         optimizer.step()
