@@ -4,9 +4,9 @@ import numpy as np
 import pandas as pd
 import torch
 import os
-import os
 import urllib.request
 import zipfile
+
 from torch.utils.data import Dataset, Subset, random_split, DataLoader
 from sklearn.preprocessing import StandardScaler
 from sklearn.datasets import fetch_openml
@@ -14,33 +14,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from ucimlrepo import fetch_ucirepo
 
-def load_cifar10():
-    transform = transforms.Compose([transforms.ToTensor()])
-
-    train_dataset = datasets.CIFAR10(
-        root="./data", train=True, download=True, transform=transform
-    )
-
-    test_dataset = datasets.CIFAR10(
-        root="./data", train=False, download=True, transform=transform
-    )
-
-    return train_dataset, test_dataset
-
-def load_cifar100():
-    train_transform = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
-    ])
-    test_transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
-    ])
-    train_dataset = datasets.CIFAR100(root="./data", train=True, download=True, transform=train_transform)
-    test_dataset = datasets.CIFAR100(root="./data", train=False, download=True, transform=test_transform)
-    return train_dataset, test_dataset
 
 def load_tinyimagenet():
     dataset_dir = download_and_prepare_tinyimagenet('./data')
@@ -62,6 +35,36 @@ def load_tinyimagenet():
     
     return train_dataset, test_dataset
 
+def load_cifar10():
+    train_transform = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+    ])
+    test_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+    ])
+    train_dataset = datasets.CIFAR10(root="./data", train=True, download=True, transform=train_transform)
+    test_dataset = datasets.CIFAR10(root="./data", train=False, download=True, transform=test_transform)
+    return train_dataset, test_dataset
+
+def load_cifar100():
+    # Normalize của CIFAR-100 khác CIFAR-10
+    train_transform = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
+    ])
+    test_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
+    ])
+    train_dataset = datasets.CIFAR100(root="./data", train=True, download=True, transform=train_transform)
+    test_dataset = datasets.CIFAR100(root="./data", train=False, download=True, transform=test_transform)
+    return train_dataset, test_dataset
 
 def get_task_datasets(dataset, task_classes):
     """
@@ -116,7 +119,7 @@ def get_dataloader(dataset, batch_size=64, shuffle=True, drop_last=False):
     g.manual_seed(42)
 
     return DataLoader(
-        dataset, batch_size=batch_size, shuffle=shuffle, num_workers=4, generator=g, drop_last=drop_last
+        dataset, batch_size=batch_size, shuffle=shuffle, num_workers=2,pin_memory=True, generator=g, drop_last=drop_last, persistent_workers=True
     )
 
 def split_task_dataset_dirichlet(task_dataset, num_clients=2, alpha=0.5, seed=42):
@@ -167,22 +170,27 @@ class TabularDataset(Dataset):
     def __init__(self, csv_file, target_col='label'):
         df = pd.read_csv(csv_file)
         
-        self.targets = df[target_col].values.astype(np.int64)
+        targets_raw = df[target_col].values.astype(np.int64)
         X_raw = df.drop(columns=[target_col]).values.astype(np.float32)
         
         scaler = StandardScaler()
-        self.X = scaler.fit_transform(X_raw)
+        X_scaled = scaler.fit_transform(X_raw)
         
-        self.input_dim = self.X.shape[1]
+        self.X_tensor = torch.from_numpy(X_scaled).float()
+        self.y_tensor = torch.from_numpy(targets_raw).long()
+        
+        self.input_dim = self.X_tensor.shape[1]
+
+        self.targets = targets_raw.tolist()
 
     def __len__(self):
         return len(self.targets)
 
     def __getitem__(self, idx):
-        return torch.tensor(self.X[idx]), torch.tensor(self.targets[idx])
+        return self.X_tensor[idx], self.y_tensor[idx]
 
 def load_tabular_data(target_col='label'):
-    train_csv_path, test_csv_path = download_dry_bean_if_not_exists()
+    train_csv_path, test_csv_path = download_letter_recognition_if_not_exists()
     train_dataset = TabularDataset(train_csv_path, target_col)
     test_dataset = TabularDataset(test_csv_path, target_col)
     return train_dataset, test_dataset
