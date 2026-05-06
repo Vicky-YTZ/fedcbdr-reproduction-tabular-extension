@@ -95,7 +95,6 @@ def train_single_client(client_id, client_loader, global_model, task_id, device,
     else:
         client_replay = None
 
-    # Local Epochs = 2
     for _ in range(1): 
         acc = train_one_epoch_tts(
             local_model,
@@ -166,10 +165,9 @@ def train_task(
                     current_lr=current_lr
                 ))
             
-            # Thu thập các local_model ngay khi Client đó train xong
+            # Collect local models as they finish training
             for future in concurrent.futures.as_completed(futures):
                 local_models.append(future.result())
-            # local_models.append(local_model)
 
         # --- FedAvg ---
         global_model = fedavg(local_models).to(device)
@@ -220,13 +218,11 @@ def main():
         for tid, dataset in test_task_datasets.items()
     }
 
-    # -------------------------------------------------------------
-    # SỬA LỖI MODEL INIT: Chỉ khởi tạo Model bằng số lượng Class của Task 0
-    # -------------------------------------------------------------
+    # Initialize the model with the number of classes for Task 0
     num_initial_classes = len(TASK_CLASSES[0])
     global_model = get_model(num_classes=num_initial_classes).to(device)
 
-    # Replay buffer (Giới hạn tổng 2000 ảnh)
+    # Replay buffer
     replay_buffer = ReplayBuffer(
         samples_per_task=2000,
         num_clients=NUM_CLIENTS,
@@ -244,9 +240,7 @@ def main():
         num_old_classes = 0 if task_id == 0 else TASK_CUMULATIVE_CLASSES[task_id - 1]
         num_total_seen_classes = TASK_CUMULATIVE_CLASSES[task_id]
         
-        # -------------------------------------------------------------
-        # MỞ RỘNG MÔ HÌNH (Mọc thêm nơ-ron cho lớp Output)
-        # -------------------------------------------------------------
+        # Expand model classifier for new classes
         global_model = expand_model_classifier(global_model, num_total_seen_classes, device)
 
         # Training
@@ -281,7 +275,7 @@ def main():
                 strategy=CONFIG_BUFFER_TYPE
             )
             
-            # Tính tổng số lượng ảnh được lưu ở tất cả Clients
+            # Calculate the total number of images stored across all clients
             total_buffer_size = 0
             for c in range(NUM_CLIENTS):
                 c_data = replay_buffer.get_client_replay_data(c)
@@ -292,9 +286,7 @@ def main():
         else:
             print("Skipping Replay Buffer (Finetune mode).")
     
-    # -------------------------------------------------------------
-    # GHI KẾT QUẢ RA FILE CSV NGAY KHI CHẠY XONG
-    # -------------------------------------------------------------
+    # Save results to CSV file
     csv_filename = f"report_metrics_{METHOD_NAME.replace('+', '_')}.csv"
     
     with open(csv_filename, mode='w', newline='') as f:
