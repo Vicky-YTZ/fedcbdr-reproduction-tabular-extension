@@ -1,27 +1,26 @@
-import copy
 import torch
+from torch.utils.data import DataLoader
+from model import extract_features
 
 
-def fedavg(local_models):
-    """
-    local_models: list of trained client models
-    return: averaged global model
-    """
-    global_model = copy.deepcopy(local_models[0])
+def extract_local_features(model, dataset, device, batch_size=128, extract_fn=extract_features):
+    model.eval()
 
-    global_state_dict = global_model.state_dict()
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
-    for key in global_state_dict.keys():
-        # 先取第一个模型参数
-        global_state_dict[key] = local_models[0].state_dict()[key].clone()
+    all_features = []
+    all_labels = []
 
-        # 把其他模型对应参数加起来
-        for i in range(1, len(local_models)):
-            global_state_dict[key] += local_models[i].state_dict()[key]
+    with torch.no_grad():
+        for inputs, labels in loader:
+            inputs = inputs.to(device)
+            feats = extract_fn(model, inputs).cpu()
+            all_features.append(feats)
+            all_labels.append(labels)
 
-        # 求平均
-        global_state_dict[key] = global_state_dict[key] / len(local_models)
+    features = torch.cat(all_features, dim=0)
+    labels = torch.cat(all_labels, dim=0)
 
-    global_model.load_state_dict(global_state_dict)
+    return features, labels
 
-    return global_model
+
