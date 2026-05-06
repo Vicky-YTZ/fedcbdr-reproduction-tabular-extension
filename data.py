@@ -24,6 +24,20 @@ def load_cifar10():
 
     return train_dataset, test_dataset
 
+def load_cifar100():
+    train_transform = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
+    ])
+    test_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
+    ])
+    train_dataset = datasets.CIFAR100(root="./data", train=True, download=True, transform=train_transform)
+    test_dataset = datasets.CIFAR100(root="./data", train=False, download=True, transform=test_transform)
+    return train_dataset, test_dataset
 
 def get_task_datasets(dataset, task_classes):
     """
