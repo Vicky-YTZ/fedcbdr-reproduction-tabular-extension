@@ -74,56 +74,67 @@ class TTSLoss(nn.Module):
         return (ce_loss * weights).mean()
 
 
+
 def train_one_epoch_tts(model, dataloader, device, replay_dataset=None, batch_size=64,
-                        task_id=0, num_old_classes=0, num_total_seen_classes=10):
+                        task_id=0, num_old_classes=0, num_total_seen_classes=10, use_tts=True):
     model.train()
-    if replay_dataset is not None:
-        current_len = len(dataloader.dataset)
-        replay_len = len(replay_dataset)
-        
-        num_repeats = max(1, (current_len // replay_len) // 2) 
-        
-        repeated_replay = ConcatDataset([replay_dataset] * num_repeats)
-        combined_dataset = ConcatDataset([dataloader.dataset, repeated_replay])
-        
-        dataloader = DataLoader(
-            combined_dataset, batch_size=batch_size, shuffle=True, num_workers=4
-        )
-
-    optimizer = optim.SGD(model.parameters(), lr=0.01*(0.5 ** task_id),weight_decay=5e-4)
-
-    # Initialize Criterion
-    if task_id == 0:
-        criterion = nn.CrossEntropyLoss()
+    
+    if replay_dataset is not None and len(replay_dataset) > 0:
+        combined_dataset = ConcatDataset([dataloader.dataset, replay_dataset])
+        train_loader = DataLoader(combined_dataset, batch_size=batch_size, shuffle=True, drop_last=False)
     else:
-        criterion = TTSLoss(
-            num_old_classes=num_old_classes,
-            num_total_seen_classes=num_total_seen_classes, # Pass new Param
-            tau_old=0.8, tau_new=1.2, w_old=2.0, w_new=0.5 # Tuned stronger parameters for minority class
-        )
+        train_loader = dataloader
 
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01, weight_decay=1e-5)
+    
+    basic_criterion = nn.CrossEntropyLoss()
+    tts_criterion = nn.CrossEntropyLoss(reduction='none') 
+
+    tau_old = 0.8
+    tau_new = 1.2
+    w_old = 1.5
+    w_new = 0.8
     total = 0
     correct = 0
 
-    for inputs, labels in dataloader:
-        if inputs.size(0) <= 1:
-            continue
+    for inputs, labels in train_loader:
+        if inputs.size(0) == 1:
+            continue 
+
         inputs, labels = inputs.to(device), labels.to(device)
         optimizer.zero_grad()
         
         outputs = model(inputs)
+        outputs = outputs[:, :num_total_seen_classes]
         
-        # IMPORTANT MASKING FOR TASK 0 AS WELL
-        if task_id == 0:
-            outputs = outputs[:, :num_total_seen_classes]
-        
-        loss = criterion(outputs, labels)
+        if use_tts and task_id > 0 and replay_dataset is not None:
+            z_old = outputs[:, :num_old_classes]
+            z_new = outputs[:, num_old_classes:]
+            
+            z_old_scaled = z_old / tau_old
+            z_new_scaled = z_new / tau_new
+            
+            z_scaled = torch.cat([z_old_scaled, z_new_scaled], dim=1)
+            
+            loss_per_sample = tts_criterion(z_scaled, labels)
+            
+            is_old_class = (labels < num_old_classes).float()
+            is_new_class = 1.0 - is_old_class
+            
+            sample_weights = is_old_class * w_old + is_new_class * w_new
+            
+            loss = (loss_per_sample * sample_weights).mean()
+        else:
+            loss = basic_criterion(outputs, labels)
+            
         loss.backward()
-        
         optimizer.step()
 
         _, predicted = outputs.max(1)
         total += labels.size(0)
         correct += predicted.eq(labels).sum().item()
 
-    return 100 * correct / total
+    if total == 0:
+        return 0.0
+
+    return 100.0 * correct / total
