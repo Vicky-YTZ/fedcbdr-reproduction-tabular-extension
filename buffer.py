@@ -1,6 +1,8 @@
 import random
 from collections import Counter
 from torch.utils.data import ConcatDataset, Subset
+from typing import Union
+import torch
 
 from gdr import (
     extract_all_client_features,
@@ -22,63 +24,46 @@ class ReplayBuffer:
         self.candidate_pool_size = candidate_pool_size
         self.task_buffers = {}
 
-    def add_task_dataset(self, task_id, client_datasets, model=None, device="cpu"):
-        """
-        exact GDR on per-client candidate pools
+    def add_task_dataset(self, task_id, client_datasets, model=None, device: Union[torch.device, str]="cpu", strategy="gdr"):
+            if model is None and strategy == "gdr":
+                raise ValueError("Exact GDR replay requires a model.")
 
-        Args:
-            task_id: 当前 task id
-            client_datasets: list of client datasets
-            model: global model
-            device: cuda/cpu
-        """
-        if model is None:
-            raise ValueError("Exact GDR replay requires a model.")
+            candidate_subsets = []
+            for dataset in client_datasets:
+                total_size = len(dataset)
+                pool_size = min(self.candidate_pool_size, total_size)
+                indices = random.sample(range(total_size), pool_size)
+                candidate_subsets.append(Subset(dataset, indices))
 
-        # 1) 先为每个 client 构造 candidate subset
-        candidate_subsets = []
-        for dataset in client_datasets:
-            total_size = len(dataset)
-            pool_size = min(self.candidate_pool_size, total_size)
-            indices = random.sample(range(total_size), pool_size)
-            candidate_subsets.append(Subset(dataset, indices))
+            samples_per_client = self.samples_per_task // self.num_clients
+            selected_subsets = []
 
-        # 2) 对所有 client 提 feature
-        client_features, client_labels = extract_all_client_features(
-            model, candidate_subsets, device
-        )
+            # baseline + GDR
+            if strategy == "gdr":
+                client_features, client_labels = extract_all_client_features(model, candidate_subsets, device)
+                client_pseudo_features = build_all_client_pseudo_features_exact(client_features, target_dim=128)
+                global_pseudo = concat_client_pseudo_features(client_pseudo_features)
+                client_sizes = [pseudo.shape[0] for pseudo in client_pseudo_features]
 
-        # 3) 对所有 client 做 exact pseudo feature
-        client_pseudo_features = build_all_client_pseudo_features_exact(
-            client_features, target_dim=128
-        )
+                U_global = server_svd_global(global_pseudo, k=32)
+                client_U_list = split_global_U_to_clients(U_global, client_sizes)
 
-        # 4) server 端拼接并做 global SVD
-        global_pseudo = concat_client_pseudo_features(client_pseudo_features)
-        client_sizes = [pseudo.shape[0] for pseudo in client_pseudo_features]
+                for client_id in range(self.num_clients):
+                    scores = compute_client_leverage_scores(client_U_list[client_id])
+                    labels = client_labels[client_id]
+                    selected_local_indices = select_replay_per_client(scores, labels, samples_per_client=samples_per_client)
+                    selected_subsets.append(Subset(candidate_subsets[client_id], selected_local_indices))
+            
+            # baseline + TTS
+            elif strategy == "random":
+                for client_id in range(self.num_clients):
+                    client_ds = candidate_subsets[client_id]
+                    pool_size = len(client_ds)
+                    actual_samples = min(samples_per_client, pool_size)
+                    random_indices = random.sample(range(pool_size), actual_samples)
+                    selected_subsets.append(Subset(client_ds, random_indices))
 
-        U_global = server_svd_global(global_pseudo, k=32)
-        client_U_list = split_global_U_to_clients(U_global, client_sizes)
-
-        # 5) 每个 client 内部按 leverage score 选 replay 样本
-        samples_per_client = self.samples_per_task // self.num_clients
-        selected_subsets = []
-
-        for client_id in range(self.num_clients):
-            scores = compute_client_leverage_scores(client_U_list[client_id])
-            labels = client_labels[client_id]
-
-            selected_local_indices = select_replay_per_client(
-                scores, labels, samples_per_client=samples_per_client
-            )
-
-            selected_subset = Subset(
-                candidate_subsets[client_id], selected_local_indices
-            )
-            selected_subsets.append(selected_subset)
-
-        # 6) 把所有 client 选出来的样本拼成当前 task 的 replay buffer
-        self.task_buffers[task_id] = ConcatDataset(selected_subsets)
+            self.task_buffers[task_id] = ConcatDataset(selected_subsets)
 
     def get_all_replay_data(self):
         if len(self.task_buffers) == 0:
