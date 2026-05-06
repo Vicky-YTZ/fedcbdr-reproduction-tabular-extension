@@ -2,10 +2,16 @@ import copy
 import random
 import numpy as np
 import torch
+import math
+import concurrent.futures
+import time
+import csv
 
-from model import get_model
+from model import get_model, expand_model_classifier
 from data import (
     load_cifar10,
+    load_cifar100,
+    load_tinyimagenet,
     get_task_datasets,
     split_task_dataset_dirichlet,
     get_dataloader,
@@ -15,10 +21,42 @@ from federated import fedavg
 from eval import evaluate
 from buffer import ReplayBuffer
 
-TASK_CLASSES = {0: [0, 1, 2, 3], 1: [4, 5, 6], 2: [7, 8, 9]}
+DATASET = 'tinyimagenet'
+if DATASET == 'cifar10':
+    num_tasks = 3
+    TASK_CLASSES = {0: [0, 1, 2, 3], 1: [4, 5, 6], 2: [7, 8, 9]}
+elif DATASET == 'cifar100':
+    num_tasks = 5
+    classes_per_task = 100 // num_tasks
+    TASK_CLASSES = {i: list(range(i * classes_per_task, (i + 1) * classes_per_task)) for i in range(num_tasks)}
+elif DATASET == 'tinyimagenet':
+    num_tasks = 10
+    classes_per_task = 200 // num_tasks
+    TASK_CLASSES = {i: list(range(i * classes_per_task, (i + 1) * classes_per_task)) for i in range(num_tasks)}
+
 # 'none' (Finetune = none + false), 'random' (+TTS), 'gdr' (+GDR / +GDR+TTS)
-CONFIG_BUFFER_TYPE = 'gdr'
-CONFIG_USE_TTS = True
+CONFIG_BUFFER_TYPE = 'none'
+CONFIG_USE_TTS = False
+
+METHOD_NAME = CONFIG_BUFFER_TYPE
+if CONFIG_USE_TTS:
+    METHOD_NAME += "+tts"
+
+def print_experiment_config():
+    print("=" * 50)
+    print(" " * 10 + "EXPERIMENT CONFIGURATIONS")
+    print("=" * 50)
+    print(f"Buffer Strategy (CONFIG_BUFFER_TYPE) : {CONFIG_BUFFER_TYPE}")
+    print(f"Number of Tasks                      : {num_tasks}")
+    print(f"Use TTS (CONFIG_USE_TTS)             : {CONFIG_USE_TTS}")
+    print(f"Number of Clients (NUM_CLIENTS)      : {NUM_CLIENTS}")
+    print(f"Rounds per Task (NUM_ROUNDS_PER_TASK): {NUM_ROUNDS_PER_TASK}")
+    print(f"Dirichlet Alpha (DIRICHLET_ALPHA)    : {DIRICHLET_ALPHA}")
+    print(f"Task Classes (TASK_CLASSES)          : {TASK_CLASSES}")
+    print(f"Seed                                 : 42")
+    print(f"Batch Size (hardcoded)               : 64")
+    print(f"Local Epochs (hardcoded)             : 2")
+    print("=" * 50 + "\n")
 
 def get_task_cumulative_classes(task_classes):
     cumulative = {}
@@ -30,9 +68,9 @@ def get_task_cumulative_classes(task_classes):
 
 TASK_CUMULATIVE_CLASSES = get_task_cumulative_classes(TASK_CLASSES)
 
-NUM_CLIENTS = 2
-NUM_ROUNDS_PER_TASK = 2
-DIRICHLET_ALPHA = 0.5 
+NUM_CLIENTS = 5
+NUM_ROUNDS_PER_TASK = 20
+DIRICHLET_ALPHA = 1 
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -43,6 +81,37 @@ def set_seed(seed=42):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+def train_single_client(client_id, client_loader, global_model, task_id, device, replay_buffer, num_old_classes, num_total_seen_classes, use_tts, current_lr):
+    print(f"\nStart training Client{client_id} Task{task_id}")
+    
+    if client_loader is None or len(client_loader.dataset) == 0:
+        print(f"Skipping Client{client_id} due to 0 samples.")
+        return copy.deepcopy(global_model).to(device)
+
+    local_model = copy.deepcopy(global_model).to(device)
+
+    if replay_buffer is not None:
+        client_replay = replay_buffer.get_client_replay_data(client_id)
+    else:
+        client_replay = None
+
+    # Local Epochs = 2
+    for _ in range(1): 
+        acc = train_one_epoch_tts(
+            local_model,
+            client_loader,
+            device,
+            replay_dataset=client_replay,
+            batch_size=64,
+            task_id=task_id,
+            num_old_classes=num_old_classes,
+            num_total_seen_classes=num_total_seen_classes,
+            use_tts=use_tts,
+            lr=current_lr
+        )
+
+    print(f"Client{client_id} training accuracy: {acc:.2f}")
+    return local_model
 
 def train_task(
     global_model,
@@ -50,7 +119,8 @@ def train_task(
     task_test_datasets,
     task_id,
     device,
-    replay_dataset=None,
+    replay_buffer,
+    results_list,
     num_old_classes=0,
     num_total_seen_classes=10
 ):
@@ -60,56 +130,86 @@ def train_task(
         alpha=DIRICHLET_ALPHA
     )
 
+    client_loaders = []
+    for c_id in range(NUM_CLIENTS):
+        if len(client_datasets[c_id]) > 0:
+            c_loader = get_dataloader(client_datasets[c_id], batch_size=64, shuffle=True)
+            client_loaders.append(c_loader)
+        else:
+            client_loaders.append(None)
+
+
     for round_id in range(NUM_ROUNDS_PER_TASK):
         print(f"\n========== Task {task_id} | Round {round_id + 1} ==========")
-
+        
+        # --- Cosine Annealing Learning Rate ---
+        min_lr = 0.001
+        max_lr = 0.01
+        current_lr = min_lr + 0.5 * (max_lr - min_lr) * (1 + math.cos(math.pi * round_id / NUM_ROUNDS_PER_TASK))
         local_models = []
 
-        for client_id in range(NUM_CLIENTS):
-            print(f"\nStart training Client{client_id} Task{task_id}")
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=NUM_CLIENTS) as executor:
+            futures = []
+            for client_id in range(NUM_CLIENTS):
+                futures.append(executor.submit(
+                    train_single_client,
+                    client_id=client_id,
+                    client_loader=client_loaders[client_id],
+                    global_model=global_model,
+                    task_id=task_id,
+                    device=device,
+                    replay_buffer=replay_buffer,
+                    num_old_classes=num_old_classes,
+                    num_total_seen_classes=num_total_seen_classes,
+                    use_tts=CONFIG_USE_TTS,
+                    current_lr=current_lr
+                ))
             
-            if len(client_datasets[client_id]) == 0:
-                print(f"Skipping Client{client_id} due to 0 samples.")
-                local_models.append(copy.deepcopy(global_model).to(device))
-                continue
+            # Thu thập các local_model ngay khi Client đó train xong
+            for future in concurrent.futures.as_completed(futures):
+                local_models.append(future.result())
+            # local_models.append(local_model)
 
-            client_loader = get_dataloader(
-                client_datasets[client_id], batch_size=64, shuffle=True
-            )
-
-            local_model = copy.deepcopy(global_model).to(device)
-
-            acc = train_one_epoch_tts(
-                local_model,
-                client_loader,
-                device,
-                replay_dataset=replay_dataset,
-                batch_size=64,
-                task_id=task_id,
-                num_old_classes=num_old_classes,
-                num_total_seen_classes=num_total_seen_classes,
-                use_tts=CONFIG_USE_TTS
-            )
-
-            print(f"Client{client_id} training accuracy: {acc:.2f}")
-            local_models.append(local_model)
-
+        # --- FedAvg ---
         global_model = fedavg(local_models).to(device)
-
         print("\nFedAvg aggregation finished.")
         
+        # --- Global Evaluation ---
         for eval_task_id, test_loader in task_test_datasets.items():
-            test_acc = evaluate(global_model, test_loader, device)
+            test_acc = evaluate(
+                model=global_model, 
+                dataloader=test_loader, 
+                device=device,
+                num_old_classes=num_old_classes,
+                use_tts=CONFIG_USE_TTS,
+                tau_old=0.5,
+                tau_new=1.5
+            )
             print(f"Global test accuracy on Task{eval_task_id}: {test_acc:.2f}")
+
+            results_list.append({
+                "Method": METHOD_NAME,
+                "Train_Task": task_id,
+                "Round": round_id + 1,
+                "Eval_Task": eval_task_id,
+                "Accuracy": test_acc
+            })
 
     return global_model
 
 
 def main():
+
     set_seed(42)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    train_dataset, test_dataset = load_cifar10()
+    if DATASET == 'cifar10':
+        train_dataset, test_dataset = load_cifar10()
+    elif DATASET == 'cifar100':
+        train_dataset, test_dataset = load_cifar100()
+    elif DATASET == 'tinyimagenet':
+        train_dataset, test_dataset = load_tinyimagenet()
     train_task_datasets = get_task_datasets(train_dataset, TASK_CLASSES)
     test_task_datasets = get_task_datasets(test_dataset, TASK_CLASSES)
 
@@ -118,19 +218,20 @@ def main():
         for tid, dataset in test_task_datasets.items()
     }
 
-    # Model Initialization
-    global_model = get_model(num_classes=10).to(device)
+    # -------------------------------------------------------------
+    # SỬA LỖI MODEL INIT: Chỉ khởi tạo Model bằng số lượng Class của Task 0
+    # -------------------------------------------------------------
+    num_initial_classes = len(TASK_CLASSES[0])
+    global_model = get_model(num_classes=num_initial_classes).to(device)
 
-    # exact GDR replay buffer
+    # Replay buffer (Giới hạn tổng 2000 ảnh)
     replay_buffer = ReplayBuffer(
-        samples_per_task=500,
+        samples_per_task=2000,
         num_clients=NUM_CLIENTS,
-        candidate_pool_size=300,
+        candidate_pool_size=2000,
     )
     
-    replay_dataset = None
     seen_test_loaders = {}
-
     num_tasks = len(TASK_CLASSES)
     
     for task_id in range(num_tasks):
@@ -140,6 +241,11 @@ def main():
         
         num_old_classes = 0 if task_id == 0 else TASK_CUMULATIVE_CLASSES[task_id - 1]
         num_total_seen_classes = TASK_CUMULATIVE_CLASSES[task_id]
+        
+        # -------------------------------------------------------------
+        # MỞ RỘNG MÔ HÌNH (Mọc thêm nơ-ron cho lớp Output)
+        # -------------------------------------------------------------
+        global_model = expand_model_classifier(global_model, num_total_seen_classes, device)
 
         # Training
         global_model = train_task(
@@ -148,7 +254,8 @@ def main():
             task_test_datasets=seen_test_loaders,
             task_id=task_id,
             device=device,
-            replay_dataset=replay_dataset,
+            replay_buffer=replay_buffer if task_id > 0 else None,
+            results_list=all_results,
             num_old_classes=num_old_classes,
             num_total_seen_classes=num_total_seen_classes
         )
@@ -160,6 +267,9 @@ def main():
                 num_clients=NUM_CLIENTS,
                 alpha=DIRICHLET_ALPHA
             )
+            
+            current_task_budget = len(TASK_CLASSES[task_id]) * 20 
+            replay_buffer.samples_per_task = current_task_budget
 
             replay_buffer.add_task_dataset(
                 task_id=task_id,
@@ -169,12 +279,19 @@ def main():
                 strategy=CONFIG_BUFFER_TYPE
             )
             
-            replay_dataset = replay_buffer.get_all_replay_data()
-            print(f"Replay buffer size after Task{task_id}: {len(replay_dataset)}")
+            # Tính tổng số lượng ảnh được lưu ở tất cả Clients
+            total_buffer_size = 0
+            for c in range(NUM_CLIENTS):
+                c_data = replay_buffer.get_client_replay_data(c)
+                if c_data is not None:
+                    total_buffer_size += len(c_data)
+                    
+            print(f"Total Replay buffer size across all clients after Task{task_id}: {total_buffer_size}")
         else:
-            replay_dataset = None
             print("Skipping Replay Buffer (Finetune mode).")
+    
 
 
 if __name__ == "__main__":
+
     main()
