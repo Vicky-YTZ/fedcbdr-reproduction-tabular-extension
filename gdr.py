@@ -26,8 +26,9 @@ def extract_local_features(model, dataset, device, batch_size=128, extract_fn=ex
 
 def extract_all_client_features(model, client_datasets, device, batch_size=128, extract_fn=extract_features):
     """
-    对所有 client 分别提 feature
-    return:
+    Extract features for all clients separately.
+    
+    Returns:
         client_features: list of tensors
         client_labels:   list of tensors
     """
@@ -44,7 +45,7 @@ def extract_all_client_features(model, client_datasets, device, batch_size=128, 
 
 def generate_square_orthogonal_matrix(n):
     """
-    生成 n x n 的随机正交矩阵
+    Generate an n x n random orthogonal matrix.
     """
     A = torch.randn(n, n)
     Q, _ = torch.linalg.qr(A)
@@ -53,23 +54,23 @@ def generate_square_orthogonal_matrix(n):
 
 def build_pseudo_features_exact(features, target_dim=128):
     """
-    真正按论文形式近似实现:
+    Exact implementation according to the paper format:
         X' = P X Q
 
     Args:
         features: [N, d]
-        target_dim: 先把右侧 Q 压到 target_dim 维
+        target_dim: Dimension to compress the right-side matrix Q down to.
 
     Returns:
         pseudo_features: [N, target_dim]
     """
     N, d = features.shape
 
-    # 右侧 shared Q: [d, target_dim]
+    # Right-side shared Q: [d, target_dim]
     Q_right = torch.randn(d, target_dim)
     Q_right, _ = torch.linalg.qr(Q_right)
 
-    # 左侧 client-specific P: [N, N]
+    # Left-side client-specific P: [N, N]
     P_left = generate_square_orthogonal_matrix(N)
 
     # XQ
@@ -83,7 +84,7 @@ def build_pseudo_features_exact(features, target_dim=128):
 
 def build_all_client_pseudo_features_exact(client_features, target_dim=128):
     """
-    对所有 client 分别构造 exact pseudo features
+    Construct exact pseudo features for all clients separately.
     """
     client_pseudo_features = []
 
@@ -96,15 +97,15 @@ def build_all_client_pseudo_features_exact(client_features, target_dim=128):
 
 def concat_client_pseudo_features(client_pseudo_features):
     """
-    server 端把所有 client 的 pseudo features 拼接起来
+    Concatenate all clients' pseudo features on the server side.
     """
     return torch.cat(client_pseudo_features, dim=0)
 
 
 def server_svd_global(global_pseudo, k=32):
     """
-    对 global concatenated pseudo features 做 SVD
-    返回前 k 列的 U_k_global
+    Perform SVD on the globally concatenated pseudo features.
+    Returns the top k columns of U_global.
     """
     U, S, Vh = torch.linalg.svd(global_pseudo, full_matrices=False)
     U_k_global = U[:, :k]
@@ -113,7 +114,7 @@ def server_svd_global(global_pseudo, k=32):
 
 def split_global_U_to_clients(U_global, client_sizes):
     """
-    按 client 的样本数把全局 U 切回每个 client 对应的 U_k
+    Split the global U matrix back to the corresponding U_k for each client based on their sample counts.
     """
     client_U_list = []
 
@@ -128,7 +129,7 @@ def split_global_U_to_clients(U_global, client_sizes):
 
 def compute_client_leverage_scores(client_U):
     """
-    根据某个 client 的 U_k 计算每个样本的 leverage score
+    Calculate the leverage score for each sample based on a client's U_k.
 
     Args:
         client_U: [N_k, k]
