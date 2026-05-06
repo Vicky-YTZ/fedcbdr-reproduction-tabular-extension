@@ -10,8 +10,8 @@ def get_model(num_classes=10):
 
 def extract_features(model, x):
     """
-    提取 ResNet18 倒数第二层特征
-    输出 shape: [batch_size, feature_dim]
+    Extract features from the penultimate layer of ResNet18.
+    Output shape: [batch_size, feature_dim]
     """
     x = model.conv1(x)
     x = model.bn1(x)
@@ -27,11 +27,6 @@ def extract_features(model, x):
     x = torch.flatten(x, 1)
 
     return x
-
-
-import torch
-import torch.nn as nn
-
 class TabularMLP(nn.Module):
     def __init__(self, input_dim, feature_dim=128, num_classes=10):
         super(TabularMLP, self).__init__()
@@ -56,8 +51,31 @@ class TabularMLP(nn.Module):
 def get_tabular_model(input_dim, num_classes=10):
     return TabularMLP(input_dim=input_dim, feature_dim=128, num_classes=num_classes)
 
-def extract_features(model, x):
+def extract_tabular_features(model, x):
     model.eval()
     with torch.no_grad():
         features = model.feature_extractor(x)
     return features
+
+
+def expand_model_classifier(model, new_num_classes, device):
+    """
+    Expand the final Linear layer for a new Task while preserving the old weights.
+    """
+    old_fc = model.fc
+    old_out_features = old_fc.out_features
+    in_features = old_fc.in_features
+    
+    # If the current number of classes is sufficient, do nothing
+    if old_out_features >= new_num_classes:
+        return model
+        
+    # Create a new, larger Linear layer
+    new_fc = nn.Linear(in_features, new_num_classes).to(device)
+    
+    # Copy old weights to the beginning of the new layer
+    new_fc.weight.data[:old_out_features] = old_fc.weight.data
+    new_fc.bias.data[:old_out_features] = old_fc.bias.data
+    
+    model.fc = new_fc
+    return model
