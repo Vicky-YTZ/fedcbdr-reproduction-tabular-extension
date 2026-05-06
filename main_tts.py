@@ -200,7 +200,9 @@ def train_task(
 
 
 def main():
-
+    start_time = time.time() 
+    all_results = []
+    print_experiment_config()
     set_seed(42)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -293,5 +295,9 @@ def main():
 
 
 if __name__ == "__main__":
-
+    import torch.multiprocessing as mp
+    try:
+        mp.set_start_method('spawn', force=True)
+    except RuntimeError:
+        pass
     main()
