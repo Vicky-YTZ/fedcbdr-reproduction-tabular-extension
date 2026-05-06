@@ -4,6 +4,9 @@ import numpy as np
 import pandas as pd
 import torch
 import os
+import os
+import urllib.request
+import zipfile
 from torch.utils.data import Dataset, Subset, random_split, DataLoader
 from sklearn.preprocessing import StandardScaler
 from sklearn.datasets import fetch_openml
@@ -38,6 +41,27 @@ def load_cifar100():
     train_dataset = datasets.CIFAR100(root="./data", train=True, download=True, transform=train_transform)
     test_dataset = datasets.CIFAR100(root="./data", train=False, download=True, transform=test_transform)
     return train_dataset, test_dataset
+
+def load_tinyimagenet():
+    dataset_dir = download_and_prepare_tinyimagenet('./data')
+    
+    train_transform = transforms.Compose([
+        transforms.RandomCrop(64, padding=8),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+    ])
+    
+    test_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+    ])
+    
+    train_dataset = datasets.ImageFolder(os.path.join(dataset_dir, 'train'), transform=train_transform)
+    test_dataset = datasets.ImageFolder(os.path.join(dataset_dir, 'val'), transform=test_transform)
+    
+    return train_dataset, test_dataset
+
 
 def get_task_datasets(dataset, task_classes):
     """
@@ -188,3 +212,54 @@ def download_dry_bean_if_not_exists(data_dir='data'):
     test_df.to_csv(test_path, index=False)
     
     return train_path, test_path
+
+def download_and_prepare_tinyimagenet(data_dir='./data'):
+    url = 'http://cs231n.stanford.edu/tiny-imagenet-200.zip'
+    dataset_dir = os.path.join(data_dir, 'tiny-imagenet-200')
+    zip_path = os.path.join(data_dir, 'tiny-imagenet-200.zip')
+
+    if not os.path.exists(dataset_dir):
+        os.makedirs(data_dir, exist_ok=True)
+        
+        # Download if the zip file does not exist
+        if not os.path.exists(zip_path):
+            print("Downloading TinyImageNet (this may take a while)...")
+            urllib.request.urlretrieve(url, zip_path)
+            print("Download complete.")
+        
+        print("Extracting TinyImageNet...")
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(data_dir)
+        
+        # Reorganize the 'val' directory to be compatible with torchvision.datasets.ImageFolder
+        val_dir = os.path.join(dataset_dir, 'val')
+        val_images_dir = os.path.join(val_dir, 'images')
+        val_annotations_file = os.path.join(val_dir, 'val_annotations.txt')
+        
+        if os.path.exists(val_annotations_file):
+            print("Formatting validation directory...")
+            with open(val_annotations_file, 'r') as f:
+                val_annotations = f.readlines()
+            
+            for line in val_annotations:
+                parts = line.strip().split('\t')
+                img_name = parts[0]
+                val_class = parts[1]
+                
+                class_dir = os.path.join(val_dir, val_class)
+                os.makedirs(class_dir, exist_ok=True)
+                
+                src = os.path.join(val_images_dir, img_name)
+                dst = os.path.join(class_dir, img_name)
+                if os.path.exists(src):
+                    os.rename(src, dst)
+            
+            # Remove redundant files/directories
+            if os.path.exists(val_images_dir) and not os.listdir(val_images_dir):
+                os.rmdir(val_images_dir)
+            if os.path.exists(val_annotations_file):
+                os.remove(val_annotations_file)
+                
+            print("Preparation of TinyImageNet complete.")
+
+    return dataset_dir
