@@ -221,6 +221,36 @@ def download_dry_bean_if_not_exists(data_dir='data'):
     
     return train_path, test_path
 
+def download_letter_recognition_if_not_exists(data_dir='data/letter'):
+    train_path = os.path.join(data_dir, 'train.csv')
+    test_path = os.path.join(data_dir, 'test.csv')
+    
+    if os.path.exists(train_path) and os.path.exists(test_path):
+        return train_path, test_path
+        
+    os.makedirs(data_dir, exist_ok=True)
+    
+    # ID của Letter Recognition dataset trên UCI là 59
+    letter = fetch_ucirepo(id=59)
+    X = letter.data.features
+    y = letter.data.targets
+    
+    df = pd.concat([X, y], axis=1)
+    
+    # Mã hóa class A-Z về số 0-25
+    target_col_original = y.columns[0]
+    le = LabelEncoder()
+    df['label'] = le.fit_transform(df[target_col_original])
+    df = df.drop(columns=[target_col_original])
+    
+    # Chia train/test
+    train_df, test_df = train_test_split(df, test_size=0.2, random_state=42, stratify=df['label'])
+    
+    train_df.to_csv(train_path, index=False)
+    test_df.to_csv(test_path, index=False)
+    
+    return train_path, test_path
+
 def download_and_prepare_tinyimagenet(data_dir='./data'):
     url = 'http://cs231n.stanford.edu/tiny-imagenet-200.zip'
     dataset_dir = os.path.join(data_dir, 'tiny-imagenet-200')
