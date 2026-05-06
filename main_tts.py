@@ -16,6 +16,9 @@ from eval import evaluate
 from buffer import ReplayBuffer
 
 TASK_CLASSES = {0: [0, 1, 2, 3], 1: [4, 5, 6], 2: [7, 8, 9]}
+# 'none' (Finetune = none + false), 'random' (+TTS), 'gdr' (+GDR / +GDR+TTS)
+CONFIG_BUFFER_TYPE = 'gdr'
+CONFIG_USE_TTS = True
 
 def get_task_cumulative_classes(task_classes):
     cumulative = {}
@@ -84,7 +87,8 @@ def train_task(
                 batch_size=64,
                 task_id=task_id,
                 num_old_classes=num_old_classes,
-                num_total_seen_classes=num_total_seen_classes
+                num_total_seen_classes=num_total_seen_classes,
+                use_tts=CONFIG_USE_TTS
             )
 
             print(f"Client{client_id} training accuracy: {acc:.2f}")
@@ -150,22 +154,26 @@ def main():
         )
 
         print("\n--- Constructing Replay Buffer ---")
-        task_client_datasets = split_task_dataset_dirichlet(
-            train_task_datasets[task_id],
-            num_clients=NUM_CLIENTS,
-            alpha=DIRICHLET_ALPHA
-        )
+        if CONFIG_BUFFER_TYPE != 'none':
+            task_client_datasets = split_task_dataset_dirichlet(
+                train_task_datasets[task_id],
+                num_clients=NUM_CLIENTS,
+                alpha=DIRICHLET_ALPHA
+            )
 
-        replay_buffer.add_task_dataset(
-            task_id=task_id,
-            client_datasets=task_client_datasets,
-            model=global_model,
-            device=device,
-        )
-        
-        replay_dataset = replay_buffer.get_all_replay_data()
-        print(f"Replay buffer size after Task{task_id}: {len(replay_dataset)}")
-        replay_buffer.print_buffer_class_distribution(task_id=task_id)
+            replay_buffer.add_task_dataset(
+                task_id=task_id,
+                client_datasets=task_client_datasets,
+                model=global_model,
+                device=device,
+                strategy=CONFIG_BUFFER_TYPE
+            )
+            
+            replay_dataset = replay_buffer.get_all_replay_data()
+            print(f"Replay buffer size after Task{task_id}: {len(replay_dataset)}")
+        else:
+            replay_dataset = None
+            print("Skipping Replay Buffer (Finetune mode).")
 
 
 if __name__ == "__main__":
