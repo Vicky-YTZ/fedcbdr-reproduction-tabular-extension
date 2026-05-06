@@ -292,6 +292,29 @@ def main():
         else:
             print("Skipping Replay Buffer (Finetune mode).")
     
+    # -------------------------------------------------------------
+    # GHI KẾT QUẢ RA FILE CSV NGAY KHI CHẠY XONG
+    # -------------------------------------------------------------
+    csv_filename = f"report_metrics_{METHOD_NAME.replace('+', '_')}.csv"
+    
+    with open(csv_filename, mode='w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=["Method", "Train_Task", "Round", "Eval_Task", "Accuracy"])
+        writer.writeheader()
+        writer.writerows(all_results)
+    
+    print(f"\n✅ All metrics saved successfully to {csv_filename}")
+
+    end_time = time.time()
+    total_time_seconds = end_time - start_time
+    hours = int(total_time_seconds // 3600)
+    minutes = int((total_time_seconds % 3600) // 60)
+    seconds = int(total_time_seconds % 60)
+    
+    print("=" * 50)
+    print(f"EXPERIMENT COMPLETED.")
+    print(f"Total time elapsed: {hours}h {minutes}m {seconds}s")
+    print("=" * 50)
+    print_experiment_config()
 
 
 if __name__ == "__main__":
