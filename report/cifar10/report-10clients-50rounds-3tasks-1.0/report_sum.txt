@@ -1,0 +1,110 @@
+FedAvg aggregation finished.
+Global test accuracy on Task0: 0.00
+Global test accuracy on Task1: 0.00
+Global test accuracy on Task2: 85.87
+
+--- Constructing Replay Buffer ---
+Total Replay buffer size across all clients after Task2: 200
+
+✅ All metrics saved successfully to report_metrics_gdr.csv
+==================================================
+EXPERIMENT COMPLETED.
+Total time elapsed: 0h 24m 50s
+==================================================
+==================================================
+          EXPERIMENT CONFIGURATIONS
+==================================================
+Buffer Strategy (CONFIG_BUFFER_TYPE) : gdr
+Use TTS (CONFIG_USE_TTS)             : False
+Number of Clients (NUM_CLIENTS)      : 10
+Rounds per Task (NUM_ROUNDS_PER_TASK): 50
+Dirichlet Alpha (DIRICHLET_ALPHA)    : 1
+Task Classes (TASK_CLASSES)          : {0: [0, 1, 2, 3], 1: [4, 5, 6], 2: [7, 8, 9]}
+Seed                                 : 42
+Batch Size (hardcoded)               : 64
+Local Epochs (hardcoded)             : 2
+==================================================
+
+FedAvg aggregation finished.
+Global test accuracy on Task0: 5.00
+Global test accuracy on Task1: 14.70
+Global test accuracy on Task2: 82.07
+
+--- Constructing Replay Buffer ---
+Total Replay buffer size across all clients after Task2: 200
+
+✅ All metrics saved successfully to report_metrics_gdr_tts.csv
+==================================================
+EXPERIMENT COMPLETED.
+Total time elapsed: 0h 28m 52s
+==================================================
+==================================================
+          EXPERIMENT CONFIGURATIONS
+==================================================
+Buffer Strategy (CONFIG_BUFFER_TYPE) : gdr
+Number of Tasks                      : 3
+Use TTS (CONFIG_USE_TTS)             : True
+Number of Clients (NUM_CLIENTS)      : 10
+Rounds per Task (NUM_ROUNDS_PER_TASK): 50
+Dirichlet Alpha (DIRICHLET_ALPHA)    : 1
+Task Classes (TASK_CLASSES)          : {0: [0, 1, 2, 3], 1: [4, 5, 6], 2: [7, 8, 9]}
+Seed                                 : 42
+Batch Size (hardcoded)               : 64
+Local Epochs (hardcoded)             : 2
+==================================================
+
+FedAvg aggregation finished.
+Global test accuracy on Task0: 6.58
+Global test accuracy on Task1: 11.20
+Global test accuracy on Task2: 81.00
+
+--- Constructing Replay Buffer ---
+Total Replay buffer size across all clients after Task2: 200
+
+✅ All metrics saved successfully to report_metrics_random_tts.csv
+==================================================
+EXPERIMENT COMPLETED.
+Total time elapsed: 0h 13m 6s
+==================================================
+==================================================
+          EXPERIMENT CONFIGURATIONS
+==================================================
+Buffer Strategy (CONFIG_BUFFER_TYPE) : random
+Number of Tasks                      : 3
+Use TTS (CONFIG_USE_TTS)             : True
+Number of Clients (NUM_CLIENTS)      : 10
+Rounds per Task (NUM_ROUNDS_PER_TASK): 50
+Dirichlet Alpha (DIRICHLET_ALPHA)    : 1
+Task Classes (TASK_CLASSES)          : {0: [0, 1, 2, 3], 1: [4, 5, 6], 2: [7, 8, 9]}
+Seed                                 : 42
+Batch Size (hardcoded)               : 64
+Local Epochs (hardcoded)             : 2
+==================================================
+
+FedAvg aggregation finished.
+Global test accuracy on Task0: 0.00
+Global test accuracy on Task1: 0.00
+Global test accuracy on Task2: 87.03
+
+--- Constructing Replay Buffer ---
+Skipping Replay Buffer (Finetune mode).
+
+✅ All metrics saved successfully to report_metrics_none_tts.csv
+==================================================
+EXPERIMENT COMPLETED.
+Total time elapsed: 0h 7m 26s
+==================================================
+==================================================
+          EXPERIMENT CONFIGURATIONS
+==================================================
+Buffer Strategy (CONFIG_BUFFER_TYPE) : none
+Number of Tasks                      : 3
+Use TTS (CONFIG_USE_TTS)             : False
+Number of Clients (NUM_CLIENTS)      : 10
+Rounds per Task (NUM_ROUNDS_PER_TASK): 50
+Dirichlet Alpha (DIRICHLET_ALPHA)    : 1
+Task Classes (TASK_CLASSES)          : {0: [0, 1, 2, 3], 1: [4, 5, 6], 2: [7, 8, 9]}
+Seed                                 : 42
+Batch Size (hardcoded)               : 64
+Local Epochs (hardcoded)             : 2
+==================================================
