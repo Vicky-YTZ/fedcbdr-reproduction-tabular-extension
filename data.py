@@ -7,9 +7,8 @@ import os
 import urllib.request
 import zipfile
 
-from torch.utils.data import Dataset, Subset, random_split, DataLoader
+from torch.utils.data import Dataset, Subset, DataLoader
 from sklearn.preprocessing import StandardScaler
-from sklearn.datasets import fetch_openml
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from ucimlrepo import fetch_ucirepo
@@ -90,26 +89,6 @@ def get_task_datasets(dataset, task_classes):
 
 
 from torch.utils.data import random_split
-
-
-def split_task_dataset_among_clients(task_dataset, num_clients=2):
-    """
-    把一个 task 的 dataset 平均分给多个 clients
-    return: list of client subsets
-    """
-    total_size = len(task_dataset)
-    base_size = total_size // num_clients
-    sizes = [base_size] * num_clients
-
-    # 把余数加到最后一个 client
-    sizes[-1] += total_size - sum(sizes)
-
-    client_subsets = random_split(task_dataset, sizes)
-
-    return client_subsets
-
-
-from torch.utils.data import DataLoader
 
 
 def get_dataloader(dataset, batch_size=64, shuffle=True, drop_last=False):
@@ -195,31 +174,6 @@ def load_tabular_data(target_col='label'):
     test_dataset = TabularDataset(test_csv_path, target_col)
     return train_dataset, test_dataset
 
-def download_dry_bean_if_not_exists(data_dir='data'):
-    train_path = os.path.join(data_dir, 'train.csv')
-    test_path = os.path.join(data_dir, 'test.csv')
-    
-    if os.path.exists(train_path) and os.path.exists(test_path):
-        return train_path, test_path
-        
-    os.makedirs(data_dir, exist_ok=True)
-    
-    dry_bean = fetch_ucirepo(id=602)
-    X = dry_bean.data.features
-    y = dry_bean.data.targets
-    
-    df = pd.concat([X, y], axis=1)
-    
-    le = LabelEncoder()
-    df['label'] = le.fit_transform(df['Class'])
-    df = df.drop(columns=['Class'])
-    
-    train_df, test_df = train_test_split(df, test_size=0.2, random_state=42, stratify=df['label'])
-    
-    train_df.to_csv(train_path, index=False)
-    test_df.to_csv(test_path, index=False)
-    
-    return train_path, test_path
 
 def download_letter_recognition_if_not_exists(data_dir='data/letter'):
     train_path = os.path.join(data_dir, 'train.csv')

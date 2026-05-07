@@ -1,7 +1,5 @@
 import random
-from collections import Counter
 from torch.utils.data import ConcatDataset, Subset
-from typing import Union
 import torch
 from model import TabularMLP, extract_tabular_features, extract_features
 
@@ -220,25 +218,6 @@ class ReplayBuffer:
         if len(self.client_buffers[client_id]) == 0:
             return None
         return ConcatDataset(self.client_buffers[client_id])
-
-    def print_buffer_class_distribution(self, client_id):
-        """
-        Debug function: Check if the client's buffer is truly class-balanced
-        """
-        client_data = self.get_client_replay_data(client_id)
-        if client_data is None:
-            print(f"No buffer found for Client {client_id}")
-            return
-
-        counter = Counter()
-
-        for i in range(len(client_data)):
-            _, label = client_data[i]
-            counter[label] += 1
-
-        print(f"\nClass distribution in replay buffer for Client {client_id}:")
-        for label, count in sorted(counter.items()):
-            print(f"  Class {label}: {count}")
 
     def select_herding_per_client(self, features, labels, samples_per_client):
         """

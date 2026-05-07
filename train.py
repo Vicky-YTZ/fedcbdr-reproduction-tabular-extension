@@ -1,45 +1,7 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
 from torch.utils.data import ConcatDataset, DataLoader
 import torch.nn.functional as F
-
-def train_one_epoch(model, dataloader, device, replay_dataset=None, batch_size=64):
-    model.train()
-
-    # If there is replay data, concatenate the current task data with the replay data
-    if replay_dataset is not None:
-        combined_dataset = ConcatDataset([dataloader.dataset, replay_dataset])
-        dataloader = DataLoader(
-            combined_dataset, batch_size=batch_size, shuffle=True, num_workers=4, drop_last=True
-        )
-
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.parameters(), lr=0.01)
-
-    total = 0
-    correct = 0
-
-    for inputs, labels in dataloader:
-        inputs = inputs.to(device)
-        labels = labels.to(device)
-
-        optimizer.zero_grad()
-
-        outputs = model(inputs)
-        loss = criterion(outputs, labels)
-
-        loss.backward()
-        optimizer.step()
-
-        _, predicted = outputs.max(1)
-
-        total += labels.size(0)
-        correct += predicted.eq(labels).sum().item()
-
-    acc = 100 * correct / total
-    return acc
-
 class TTSLoss(nn.Module):
     def __init__(self, num_old_classes, tau_old=0.5, tau_new=1.5, w_old=1.5, w_new=1.0):
         super(TTSLoss, self).__init__()
