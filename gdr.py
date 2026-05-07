@@ -4,6 +4,8 @@ from model import extract_features
 
 
 def extract_local_features(model, dataset, device, batch_size=128, extract_fn=extract_features):
+    if len(dataset) == 0:
+        return torch.tensor([]), torch.tensor([])
     model.eval()
 
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=4)
@@ -36,9 +38,13 @@ def extract_all_client_features(model, client_datasets, device, batch_size=128, 
     client_labels = []
 
     for dataset in client_datasets:
-        feats, labels = extract_local_features(model, dataset, device, batch_size, extract_fn=extract_fn)
-        client_features.append(feats)
-        client_labels.append(labels)
+        if len(dataset) == 0:
+            client_features.append(torch.tensor([]))
+            client_labels.append(torch.tensor([]))
+        else:
+            feats, labels = extract_local_features(model, dataset, device, batch_size, extract_fn=extract_fn)
+            client_features.append(feats)
+            client_labels.append(labels)
 
     return client_features, client_labels
 
@@ -89,7 +95,10 @@ def build_all_client_pseudo_features_exact(client_features, target_dim=128):
     client_pseudo_features = []
 
     for features in client_features:
-        pseudo = build_pseudo_features_exact(features, target_dim=target_dim)
+        if features.numel() == 0:
+            pseudo = torch.empty(0, target_dim)
+        else:
+            pseudo = build_pseudo_features_exact(features, target_dim=target_dim)
         client_pseudo_features.append(pseudo)
 
     return client_pseudo_features
